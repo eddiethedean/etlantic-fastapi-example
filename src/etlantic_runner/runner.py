@@ -4,12 +4,16 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
+from etlantic.lifecycle.runtime import PipelineRuntime
+from etlantic.registry import BindingDescriptor
+from etlantic.secrets import SecretRef
 from sqlalchemy.orm import Session
 
 from etlantic_runner.config import Settings
 from etlantic_runner.database import SessionLocal
 from etlantic_runner.etlantic_service import service_for
-from etlantic_runner.models import Pipeline, PipelineRun
+from etlantic_runner.models import Pipeline, PipelineRun, PipelineTokenGrant
+from etlantic_runner.token_store import UserTokenProvider
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +69,12 @@ class PipelineRunner:
             run.started_at = datetime.now(UTC)
             session.commit()
             try:
+                runtime = self._runtime_for(run)
                 service = service_for(
                     run.pipeline_document,
                     run.pipeline_id,
                     self.settings,
+                    runtime=runtime,
                 )
                 result = service.submit_run(run.pipeline_id)
                 run.status = result["status"]
@@ -82,6 +88,33 @@ class PipelineRunner:
                 run.finished_at = datetime.now(UTC)
                 session.commit()
 
+    def _runtime_for(self, run: PipelineRun) -> PipelineRuntime:
+        runtime = PipelineRuntime()
+        runtime.register_secret_provider(
+            "user-tokens",
+            UserTokenProvider(run.owner_id, self.settings),
+        )
+        with SessionLocal() as session:
+            grants = (
+                session.query(PipelineTokenGrant)
+                .filter(PipelineTokenGrant.pipeline_id == run.pipeline_id)
+                .all()
+            )
+            for grant in grants:
+                runtime.registry.register_binding(
+                    BindingDescriptor(
+                        binding=grant.binding,
+                        provider=grant.provider,
+                        location=grant.location,
+                        secret_ref=SecretRef(
+                            provider="user-tokens",
+                            name=grant.token_id,
+                            key="value",
+                            purpose=grant.operation,
+                        ),
+                    )
+                )
+        return runtime
+
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=False)
-

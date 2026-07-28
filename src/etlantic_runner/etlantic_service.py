@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from etlantic.authoring import pipeline_to_dict
+from etlantic.lifecycle.runtime import PipelineRuntime
 from etlantic.service import AuthoringService, PolicyContext
 
 from etlantic_runner.config import Settings
@@ -12,13 +12,16 @@ def service_for(
     document: dict[str, Any],
     definition_id: str,
     settings: Settings,
+    *,
+    runtime: PipelineRuntime | None = None,
 ) -> AuthoringService:
     service = AuthoringService(
         policy=PolicyContext(
             tenant="application",
             environment="development",
             profile=settings.profile,
-        )
+        ),
+        runtime=runtime or PipelineRuntime(),
     )
     service.put_definition(definition_id, document)
     return service
@@ -49,4 +52,3 @@ def apply_document_edit(
         expected_token=expected_token,
     )
     return result["definition"], result["fingerprint"]
-

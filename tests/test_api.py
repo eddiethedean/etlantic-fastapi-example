@@ -3,17 +3,20 @@ from __future__ import annotations
 import time
 
 from etlantic.authoring import (
+    contract_definition,
     edge,
     extract_node,
     field_spec,
-    contract_definition,
     load_node,
     pipeline_definition,
     pipeline_to_dict,
 )
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from etlantic_runner.api import app
+from etlantic_runner.database import SessionLocal
+from etlantic_runner.models import ApiToken
 
 
 def pipeline_document() -> dict:
@@ -161,3 +164,83 @@ def test_rejects_unverified_pipeline_document() -> None:
         )
         assert response.status_code == 422
 
+
+def test_tokens_are_encrypted_scoped_and_used_by_pipeline() -> None:
+    plaintext = "sk-example-super-secret-value"
+    with TestClient(app) as client:
+        owner = auth_headers(client, "token-owner@example.com")
+        other = auth_headers(client, "token-other@example.com")
+        response = client.post(
+            "/tokens",
+            headers=owner,
+            json={
+                "name": "source-api",
+                "value": plaintext,
+                "allow_read": True,
+                "allow_write": False,
+            },
+        )
+        assert response.status_code == 201, response.text
+        token = response.json()
+        assert "value" not in token
+        assert "encrypted_value" not in token
+        assert token["last_four"] == "alue"
+        assert client.get(f"/tokens/{token['id']}", headers=other).status_code == 404
+
+        with SessionLocal() as session:
+            stored = session.scalar(select(ApiToken).where(ApiToken.id == token["id"]))
+            assert stored is not None
+            assert plaintext.encode() not in stored.encrypted_value
+
+        pipeline = client.post(
+            "/pipelines",
+            headers=owner,
+            json={
+                "name": "credentialed",
+                "document": pipeline_document(),
+            },
+        ).json()
+        response = client.post(
+            f"/pipelines/{pipeline['id']}/token-grants",
+            headers=owner,
+            json={
+                "token_id": token["id"],
+                "binding": "source",
+                "provider": "memory",
+                "operation": "read",
+            },
+        )
+        assert response.status_code == 201, response.text
+        reference = response.json()["secret_ref"]
+        assert reference == {
+            "provider": "user-tokens",
+            "name": token["id"],
+            "key": "value",
+            "version": "current",
+            "purpose": "read",
+        }
+
+        response = client.post(
+            f"/pipelines/{pipeline['id']}/runs", headers=owner
+        )
+        run_id = response.json()["id"]
+        for _ in range(100):
+            run = client.get(f"/runs/{run_id}", headers=owner).json()
+            if run["status"] not in {"queued", "running"}:
+                break
+            time.sleep(0.02)
+        assert run["status"] in {"succeeded", "partial"}
+        refreshed = client.get(f"/tokens/{token['id']}", headers=owner).json()
+        assert refreshed["last_used_at"] is not None
+
+        response = client.post(
+            f"/pipelines/{pipeline['id']}/token-grants",
+            headers=owner,
+            json={
+                "token_id": token["id"],
+                "binding": "sink",
+                "provider": "memory",
+                "operation": "write",
+            },
+        )
+        assert response.status_code == 422

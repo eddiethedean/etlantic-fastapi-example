@@ -7,7 +7,7 @@ enabled schedules into APScheduler when it starts.
 
 ## Start it
 
-This example uses the sibling `../etlantic` checkout as an editable dependency.
+The app installs the latest published ETLantic release from PyPI.
 
 ```bash
 cp .env.example .env
@@ -46,6 +46,8 @@ Use the returned token as `Authorization: Bearer <token>`.
 - `POST /pipelines/{id}/runs`, `GET /runs`, `GET /runs/{id}`
 - `POST /pipelines/{id}/schedules`
 - `GET/PATCH/DELETE /schedules/{id}`
+- `POST/GET/PATCH/DELETE /tokens` for encrypted user API tokens
+- `POST/GET/DELETE /pipelines/{id}/token-grants`
 
 Pipeline documents must be sealed `etlantic.pipeline/1` documents with a valid
 fingerprint. This prevents saving a payload that was changed after ETLantic
@@ -66,6 +68,52 @@ Schedules accept APScheduler trigger arguments:
 {"name":"once","trigger_type":"date","trigger_args":{"run_date":"2030-01-01T00:00:00Z"}}
 ```
 
+## Secure API tokens
+
+Set `ETLANTIC_TOKEN_ENCRYPTION_KEY` to a persistent Fernet key before startup:
+
+```bash
+uv run python -c \
+  "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Users submit a token once through `POST /tokens`. Values are authenticated-
+encrypted in the database and are never returned by the API. Tokens can be
+rotated, disabled, or deleted, and independently restricted to reads, writes,
+or both.
+
+Grant a stored token to one pipeline asset:
+
+```json
+{
+  "token_id": "the-token-uuid",
+  "binding": "customer_source",
+  "provider": "your-storage-provider",
+  "location": "https://api.example.com/customers",
+  "operation": "read"
+}
+```
+
+The grant creates an ETLantic reference shaped like:
+
+```json
+{
+  "provider": "user-tokens",
+  "name": "the-token-uuid",
+  "key": "value",
+  "version": "current",
+  "purpose": "read"
+}
+```
+
+Only that reference enters the pipeline plan. During a run, the owner-scoped
+provider verifies the requested operation, decrypts the value just in time,
+and supplies an ETLantic `SecretValue` to the configured storage provider.
+Secret values refuse serialization and do not enter pipeline documents,
+reports, API responses, or application logs. Keep the encryption key outside
+the database and back it up securely; losing it makes stored tokens
+unrecoverable.
+
 ## Operational boundary
 
 This is an in-process runner and scheduler, as requested. It is appropriate for
@@ -73,4 +121,3 @@ one application process. Running multiple API replicas would restore the same
 schedules in every replica; before scaling horizontally, add leader election or
 move scheduling/execution to a dedicated worker service. SQLite should likewise
 be replaced with PostgreSQL before multi-process production deployment.
-

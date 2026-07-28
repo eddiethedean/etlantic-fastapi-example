@@ -30,15 +30,18 @@ class ScheduleManager:
                     self.sync(schedule)
                 except Exception:
                     logger.exception("Could not restore schedule %s", schedule.id)
+            session.commit()
 
     def build_trigger(self, trigger_type: str, args: dict[str, Any]):
+        trigger_args = dict(args)
+        timezone = trigger_args.pop("timezone", UTC)
         try:
             if trigger_type == "cron":
-                return CronTrigger(**args, timezone=args.get("timezone", UTC))
+                return CronTrigger(**trigger_args, timezone=timezone)
             if trigger_type == "interval":
-                return IntervalTrigger(**args, timezone=args.get("timezone", UTC))
+                return IntervalTrigger(**trigger_args, timezone=timezone)
             if trigger_type == "date":
-                return DateTrigger(**args, timezone=args.get("timezone", UTC))
+                return DateTrigger(**trigger_args, timezone=timezone)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid {trigger_type} trigger: {exc}") from exc
         raise ValueError(f"Unsupported trigger type: {trigger_type}")
@@ -77,4 +80,3 @@ class ScheduleManager:
     def shutdown(self) -> None:
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
-

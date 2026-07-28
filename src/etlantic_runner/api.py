@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 from alembic import command
@@ -18,13 +19,25 @@ from etlantic_runner.etlantic_service import (
     service_for,
     verify_document,
 )
-from etlantic_runner.models import Pipeline, PipelineRun, Schedule, User
+from etlantic_runner.models import (
+    ApiToken,
+    Pipeline,
+    PipelineRun,
+    PipelineTokenGrant,
+    Schedule,
+    User,
+)
 from etlantic_runner.runner import PipelineRunner
 from etlantic_runner.scheduler import ScheduleManager
 from etlantic_runner.schemas import (
+    ApiTokenCreate,
+    ApiTokenRead,
+    ApiTokenUpdate,
     PipelineCreate,
     PipelineEdit,
     PipelineRead,
+    PipelineTokenGrantCreate,
+    PipelineTokenGrantRead,
     PipelineUpdate,
     PlanResult,
     RunRead,
@@ -44,6 +57,7 @@ from etlantic_runner.security import (
     hash_password,
     verify_password,
 )
+from etlantic_runner.token_store import TokenCipher
 
 DbSession = Annotated[Session, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
@@ -77,6 +91,18 @@ def owned_schedule(db: Session, schedule_id: str, user: User) -> Schedule:
     return schedule
 
 
+def owned_token(db: Session, token_id: str, user: User) -> ApiToken:
+    token = db.scalar(
+        select(ApiToken).where(
+            ApiToken.id == token_id,
+            ApiToken.owner_id == user.id,
+        )
+    )
+    if token is None:
+        raise not_found("Token")
+    return token
+
+
 def etlantic_bad_request(exc: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=str(exc))
 
@@ -86,6 +112,7 @@ users = APIRouter(prefix="/users", tags=["users"])
 pipelines = APIRouter(prefix="/pipelines", tags=["pipelines"])
 runs = APIRouter(prefix="/runs", tags=["runs"])
 schedules = APIRouter(prefix="/schedules", tags=["schedules"])
+tokens = APIRouter(prefix="/tokens", tags=["tokens"])
 
 
 @users.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -100,7 +127,9 @@ def register_user(body: UserCreate, db: DbSession) -> User:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Email is already registered") from exc
+        raise HTTPException(
+            status_code=409, detail="Email is already registered"
+        ) from exc
     db.refresh(user)
     return user
 
@@ -155,6 +184,96 @@ def list_users(
 @users.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def deactivate_me(user: CurrentUser, db: DbSession) -> None:
     user.is_active = False
+    db.commit()
+
+
+@tokens.post("", response_model=ApiTokenRead, status_code=status.HTTP_201_CREATED)
+def create_api_token(
+    body: ApiTokenCreate,
+    user: CurrentUser,
+    db: DbSession,
+    settings: AppSettings,
+) -> ApiToken:
+    cipher = TokenCipher(settings.token_encryption_key)
+    token = ApiToken(
+        owner_id=user.id,
+        name=body.name,
+        encrypted_value=cipher.encrypt(body.value),
+        last_four=body.value[-4:],
+        allow_read=body.allow_read,
+        allow_write=body.allow_write,
+    )
+    db.add(token)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="A token with this name already exists"
+        ) from exc
+    db.refresh(token)
+    return token
+
+
+@tokens.get("", response_model=list[ApiTokenRead])
+def list_api_tokens(user: CurrentUser, db: DbSession) -> list[ApiToken]:
+    return list(
+        db.scalars(
+            select(ApiToken)
+            .where(ApiToken.owner_id == user.id)
+            .order_by(ApiToken.created_at.desc())
+        )
+    )
+
+
+@tokens.get("/{token_id}", response_model=ApiTokenRead)
+def get_api_token(token_id: str, user: CurrentUser, db: DbSession) -> ApiToken:
+    return owned_token(db, token_id, user)
+
+
+@tokens.patch("/{token_id}", response_model=ApiTokenRead)
+def update_api_token(
+    token_id: str,
+    body: ApiTokenUpdate,
+    user: CurrentUser,
+    db: DbSession,
+    settings: AppSettings,
+) -> ApiToken:
+    token = owned_token(db, token_id, user)
+    allow_read = body.allow_read if body.allow_read is not None else token.allow_read
+    allow_write = (
+        body.allow_write if body.allow_write is not None else token.allow_write
+    )
+    if not allow_read and not allow_write:
+        raise HTTPException(
+            status_code=422,
+            detail="At least one of allow_read or allow_write is required",
+        )
+    if body.name is not None:
+        token.name = body.name
+    if body.value is not None:
+        token.encrypted_value = TokenCipher(settings.token_encryption_key).encrypt(
+            body.value
+        )
+        token.last_four = body.value[-4:]
+    token.allow_read = allow_read
+    token.allow_write = allow_write
+    if body.is_active is not None:
+        token.is_active = body.is_active
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="A token with this name already exists"
+        ) from exc
+    db.refresh(token)
+    return token
+
+
+@tokens.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_api_token(token_id: str, user: CurrentUser, db: DbSession) -> None:
+    db.delete(owned_token(db, token_id, user))
     db.commit()
 
 
@@ -276,6 +395,98 @@ def edit_pipeline(
 @pipelines.delete("/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_pipeline(pipeline_id: str, user: CurrentUser, db: DbSession) -> None:
     db.delete(owned_pipeline(db, pipeline_id, user))
+    db.commit()
+
+
+@pipelines.post(
+    "/{pipeline_id}/token-grants",
+    response_model=PipelineTokenGrantRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def grant_pipeline_token(
+    pipeline_id: str,
+    body: PipelineTokenGrantCreate,
+    user: CurrentUser,
+    db: DbSession,
+) -> PipelineTokenGrant:
+    pipeline = owned_pipeline(db, pipeline_id, user)
+    token = owned_token(db, body.token_id, user)
+    if not token.is_active:
+        raise HTTPException(status_code=422, detail="Token is inactive")
+    if body.operation == "read" and not token.allow_read:
+        raise HTTPException(status_code=422, detail="Token does not allow reads")
+    if body.operation == "write" and not token.allow_write:
+        raise HTTPException(status_code=422, detail="Token does not allow writes")
+    assets = {
+        node.get("asset")
+        for node in pipeline.document.get("nodes", [])
+        if isinstance(node, dict)
+    }
+    if body.binding not in assets:
+        raise HTTPException(
+            status_code=422,
+            detail="Binding must match an asset in the pipeline document",
+        )
+    grant = PipelineTokenGrant(
+        pipeline_id=pipeline.id,
+        token_id=token.id,
+        binding=body.binding,
+        provider=body.provider,
+        location=body.location,
+        operation=body.operation,
+    )
+    db.add(grant)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This pipeline binding already has a token grant",
+        ) from exc
+    db.refresh(grant)
+    return grant
+
+
+@pipelines.get(
+    "/{pipeline_id}/token-grants",
+    response_model=list[PipelineTokenGrantRead],
+)
+def list_pipeline_token_grants(
+    pipeline_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> list[PipelineTokenGrant]:
+    pipeline = owned_pipeline(db, pipeline_id, user)
+    return list(
+        db.scalars(
+            select(PipelineTokenGrant).where(
+                PipelineTokenGrant.pipeline_id == pipeline.id
+            )
+        )
+    )
+
+
+@pipelines.delete(
+    "/{pipeline_id}/token-grants/{grant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_pipeline_token(
+    pipeline_id: str,
+    grant_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> None:
+    pipeline = owned_pipeline(db, pipeline_id, user)
+    grant = db.scalar(
+        select(PipelineTokenGrant).where(
+            PipelineTokenGrant.id == grant_id,
+            PipelineTokenGrant.pipeline_id == pipeline.id,
+        )
+    )
+    if grant is None:
+        raise not_found("Token grant")
+    db.delete(grant)
     db.commit()
 
 
@@ -452,8 +663,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        TokenCipher(resolved_settings.token_encryption_key)
         if resolved_settings.auto_migrate:
-            alembic = Config("alembic.ini")
+            config_path = Path(__file__).resolve().parents[2] / "alembic.ini"
+            alembic = Config(str(config_path))
             alembic.set_main_option("sqlalchemy.url", resolved_settings.database_url)
             command.upgrade(alembic, "head")
         runner = PipelineRunner(resolved_settings)
@@ -478,6 +691,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pipelines)
     app.include_router(runs)
     app.include_router(schedules)
+    app.include_router(tokens)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:
@@ -487,4 +701,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-

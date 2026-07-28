@@ -42,6 +42,7 @@ USER_SCOPED_KEYS = (
     LAST_ACCEPT_TOKEN_KEY,
 )
 
+
 @dataclass(frozen=True, slots=True)
 class _StoredAuthSession:
     access_token: str

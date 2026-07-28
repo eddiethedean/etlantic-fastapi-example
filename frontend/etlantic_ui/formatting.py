@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -13,7 +13,10 @@ def format_dt(value: datetime | str | None) -> str:
         except ValueError:
             return value
     if value.tzinfo is None:
-        return value.isoformat(sep=" ", timespec="seconds") + " (naive)"
+        # SQLAlchemy's SQLite dialect returns DateTime columns without tzinfo.
+        # The runner persists application timestamps in UTC, so restore that
+        # contract before converting to the viewer's local timezone.
+        value = value.replace(tzinfo=UTC)
     return value.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
@@ -43,16 +46,18 @@ def asset_bindings(document: dict[str, Any]) -> list[str]:
 
 def node_counts(document: dict[str, Any]) -> dict[str, int]:
     counts = {"extract": 0, "transform": 0, "load": 0, "other": 0}
+    kind_groups = {
+        "extract": {"extract", "source"},
+        "transform": {"transform", "transformation", "map", "step"},
+        "load": {"load", "sink"},
+    }
     for node in document.get("nodes") or []:
         if not isinstance(node, dict):
             continue
         kind = str(node.get("kind") or node.get("type") or "other").lower()
-        if "extract" in kind:
-            counts["extract"] += 1
-        elif "load" in kind:
-            counts["load"] += 1
-        elif "transform" in kind or "map" in kind:
-            counts["transform"] += 1
-        else:
-            counts["other"] += 1
+        bucket = next(
+            (name for name, aliases in kind_groups.items() if kind in aliases),
+            "other",
+        )
+        counts[bucket] += 1
     return counts

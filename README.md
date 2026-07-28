@@ -59,6 +59,7 @@ Full walkthrough: **[docs/getting-started.md](docs/getting-started.md)**
 | Streamlit UI | [docs/streamlit-ui.md](docs/streamlit-ui.md) |
 | Development | [docs/development.md](docs/development.md) |
 | Deployment | [docs/deployment.md](docs/deployment.md) |
+| Roadmap | [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md) |
 
 ## Project layout
 

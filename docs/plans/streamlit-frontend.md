@@ -2,7 +2,29 @@
 
 > **Status:** Phases 0–4 are implemented in `frontend/`. Phase 5 (visual graph
 > builder) and several §11 backend enhancements remain future work. See
-> [Streamlit UI](../streamlit-ui.md) for the current product docs.
+> [Streamlit UI](../streamlit-ui.md) for the current product docs. Future work
+> follows [Planning and Delivery Standards](delivery-standards.md).
+
+### Implemented baseline
+
+The delivered UI is an HTTP-only client with authentication, pipeline JSON
+authoring and draft verification, runs, schedules, encrypted-token metadata and
+grants, groups, invitations, account management, authorization-aware actions,
+and OpenAPI coverage tests.
+
+Post-delivery hardening also:
+
+- recognizes canonical ETLantic node kinds (`source`, `step`, and `sink`) in
+  pipeline summaries;
+- interprets SQLite's timezone-naive application timestamps as UTC before local
+  display;
+- restores same-process Streamlit authentication after a full browser refresh
+  using a hashed same-origin browser key and server-memory token storage.
+
+That refresh mechanism is intentionally an interim single-process solution.
+Roadmap 0.2 replaces it with durable rotating sessions before multi-process UI
+deployment. The remaining sections retain historical implementation detail;
+where they conflict with a dedicated future plan, the dedicated plan wins.
 
 ## 1. Purpose
 
@@ -655,21 +677,15 @@ Exit criteria:
 
 ### Phase 5 — Visual pipeline builder
 
-Prerequisites:
+The visual builder is now specified in the dedicated
+[Visual Pipeline Builder Product and Delivery Plan](visual-pipeline-builder.md).
+That plan expands the original feature list into an end-to-end interaction
+model, backend draft contracts, accessibility requirements, testing strategy,
+measurable experience targets, and incremental 0.5.x release gates.
 
-- backend authoring catalog/negotiation endpoints;
-- stable list of supported ETLantic edit commands;
-- draft sealing/fingerprinting endpoint;
-- a decision on the graph-editor component and its maintenance/security posture.
-
-Deliverables:
-
-- node palette;
-- edge and port editor;
-- property inspector;
-- diagnostic overlays;
-- graph/JSON round-trip;
-- safe save through backend ETLantic authoring operations.
+The critical design rule remains unchanged: the graph component emits user
+intent, while FastAPI and ETLantic apply edits, verify and canonicalize drafts,
+enforce optimistic concurrency, persist revisions, and authorize execution.
 
 ## 11. Recommended backend enhancements
 
@@ -760,3 +776,18 @@ The frontend release is complete when:
 - tests cover personal and shared pipeline workflows;
 - OpenAPI/client drift is checked in CI;
 - deployment docs keep all backend secrets out of Streamlit.
+
+## 14. Follow-on ownership
+
+Remaining work is assigned to dedicated plans:
+
+| Concern | Owning plan |
+| --- | --- |
+| Durable refresh/session exchange, pagination, idempotency, problem details | [0.2 API ergonomics and sessions](api-ergonomics-sessions.md) |
+| Cancellation, live events, audit, revisions, operational health | [0.3 Observability and operations](observability-operations.md) |
+| Catalog, typed structured edits, and server-side drafts | [0.4 Authoring platform](authoring-platform.md) |
+| Canvas authoring and graph-centered run experience | [0.5 Visual pipeline builder](visual-pipeline-builder.md) |
+| Roles, delivery-backed invitations, and collaborative editing UX | [0.6 Collaboration depth](collaboration-depth.md) |
+
+Do not expand this historical plan with duplicate future requirements. Update
+the owning plan and roadmap instead.

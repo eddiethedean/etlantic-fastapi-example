@@ -6,6 +6,10 @@
 > **Goal:** Make execution, security-sensitive changes, and production health
 > inspectable without exposing credentials or requiring direct database access.
 
+The durable claim, attempt, lease, and retry state machine is defined in
+[Durable Run Recovery](durable-run-recovery.md). This plan owns its observable
+events, cancellation experience, audit trail, and operational recovery signals.
+
 ## Outcomes
 
 - Users can follow and cancel runs from submission through a terminal state.

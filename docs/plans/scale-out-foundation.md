@@ -7,6 +7,10 @@
 > **Goal:** Run multiple API instances and independent workers without duplicate
 > schedules, lost jobs, or accidental secret distribution.
 
+This phase completes the multi-worker slices of
+[Durable Run Recovery](durable-run-recovery.md); it must reuse that run/attempt
+state machine rather than introduce a second queue model.
+
 ## Target topology
 
 ```mermaid

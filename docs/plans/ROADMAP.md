@@ -111,6 +111,9 @@ changing the single-process execution model.
 
 Detailed plan:
 [Observability and Operations](observability-operations.md).
+Run recovery is specified separately in
+[Durable Run Recovery](durable-run-recovery.md) because it spans the 0.3
+single-process hardening and 0.7 multi-worker architecture.
 
 Make runs and production operation inspectable and safer to deploy.
 
@@ -126,6 +129,10 @@ Make runs and production operation inspectable and safer to deploy.
    and restore.
 5. **Ops docs** — PostgreSQL checklist, logging redaction, readiness probes,
    and single-leader scheduler notes expanded in [deployment.md](../deployment.md).
+6. **Restart recovery** — recover never-started queued work, classify abandoned
+   running attempts, and never blindly retry an ambiguous external write.
+7. **Durable attempts** — attempt history, leases, heartbeats, fencing, and
+   policy-gated whole-run retry.
 
 ### Exit criteria
 
@@ -136,6 +143,8 @@ Make runs and production operation inspectable and safer to deploy.
 - Run events reconnect without gaps or secret-bearing payloads.
 - Readiness, restart recovery, redaction, and incident runbooks pass the
   detailed operational release gates.
+- Executor-memory loss cannot strand a never-started run, and stale workers
+  cannot commit after lease replacement.
 
 ---
 
@@ -242,6 +251,8 @@ Move groups from “share a link token” toward operable team workflows.
 **Status:** Later
 
 Detailed plan: [Scale-Out Foundation](scale-out-foundation.md).
+The claim/attempt state machine is shared with
+[Durable Run Recovery](durable-run-recovery.md).
 
 Graduate the example past a single in-process runner/scheduler when needed.
 

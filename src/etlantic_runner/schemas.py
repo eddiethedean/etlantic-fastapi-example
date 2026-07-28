@@ -53,6 +53,7 @@ class GroupRead(ORMModel):
     owner_id: str
     name: str
     description: str | None
+    current_user_role: Literal["owner", "member"]
     created_at: datetime
     updated_at: datetime
 
@@ -184,6 +185,17 @@ class PipelineUpdate(BaseModel):
     expected_version: int | None = Field(default=None, ge=1)
 
 
+class PipelineDraft(BaseModel):
+    document: dict[str, Any]
+
+
+class PipelineDraftResult(BaseModel):
+    ok: bool
+    document: dict[str, Any] | None = None
+    fingerprint: str | None = None
+    diagnostics: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class PipelineRead(ORMModel):
     id: str
     owner_id: str
@@ -192,6 +204,9 @@ class PipelineRead(ORMModel):
     document: dict[str, Any]
     fingerprint: str
     version: int
+    access_source: Literal["owned", "group"]
+    can_delete: bool
+    shared_group_ids: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

@@ -12,6 +12,7 @@ It persists users, sealed pipeline documents, run history, schedules, encrypted 
 - Encrypted user API tokens with per-pipeline asset grants (`SecretValue` at runtime)
 - Groups with hashed one-time invitations and shared pipeline access
 - Interactive OpenAPI docs at `/docs`
+- Streamlit web UI for the full non-admin workflow
 
 ## Requirements
 
@@ -32,7 +33,7 @@ Edit `.env` and set strong secrets before the first run:
 uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Then install, migrate, and start:
+Then install, migrate, and start the API:
 
 ```bash
 uv sync
@@ -41,17 +42,26 @@ uv run uvicorn etlantic_runner.api:app --reload
 # or: uv run python -m etlantic_runner
 ```
 
+In a second terminal, start the Streamlit UI (HTTP client only — no backend secrets):
+
+```bash
+ETLANTIC_UI_API_URL=http://127.0.0.1:8000 \
+  uv run streamlit run frontend/Home.py
+# or: uv run etlantic-ui
+```
+
 | URL | Purpose |
 | --- | --- |
 | http://127.0.0.1:8000/docs | Swagger UI |
 | http://127.0.0.1:8000/redoc | ReDoc |
 | http://127.0.0.1:8000/health | Liveness check |
+| http://127.0.0.1:8501 | Streamlit UI |
 
 Migrations also run automatically on startup when `ETLANTIC_AUTO_MIGRATE` is left at its default (`true`).
 
 ## Configuration
 
-Environment variables use the `ETLANTIC_` prefix (see `.env.example`):
+Environment variables for the **API** use the `ETLANTIC_` prefix (see `.env.example`):
 
 | Variable | Default | Notes |
 | --- | --- | --- |
@@ -63,7 +73,25 @@ Environment variables use the `ETLANTIC_` prefix (see `.env.example`):
 | `ETLANTIC_PROFILE` | `development` | Passed into ETLantic policy context |
 | `ETLANTIC_AUTO_MIGRATE` | `true` | Run Alembic `upgrade head` on app startup |
 
+Streamlit **UI-only** settings (never put JWT or Fernet keys here):
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `ETLANTIC_UI_API_URL` | `http://127.0.0.1:8000` | FastAPI base URL |
+| `ETLANTIC_UI_REQUEST_TIMEOUT_SECONDS` | `15` | httpx timeout |
+| `ETLANTIC_UI_RUN_POLL_SECONDS` | `2` | Run status poll interval |
+
 The pinned ETLantic release comes from PyPI (`etlantic==0.29.0` in `pyproject.toml`).
+
+## Streamlit UI
+
+The UI under `frontend/` is an HTTP client for the API. It does not import database
+models, open SQLite, decrypt tokens, execute pipelines, or touch APScheduler.
+
+Pages cover sign-in/registration, pipeline library and workspace (JSON editor with
+verify-and-save, validate, plan, run), run history, schedules, encrypted API-token
+vault, groups/invitations/sharing, and account settings. Invitation acceptance
+tokens are shown once for manual copy; the app does not send email.
 
 ## Authentication
 
@@ -101,6 +129,7 @@ Interactive docs are the source of truth for request/response schemas. High-leve
 | Method | Path | Notes |
 | --- | --- | --- |
 | `POST` / `GET` | `/pipelines` | Create / list (owned + group-shared) |
+| `POST` | `/pipelines/verify-draft` | Seal/verify a draft document before save |
 | `GET` / `PATCH` / `DELETE` | `/pipelines/{id}` | Read / update / delete (delete = owner only) |
 | `POST` | `/pipelines/{id}/edits` | ETLantic immutable edit commands |
 | `POST` | `/pipelines/{id}/validate` | Validation diagnostics |
@@ -214,6 +243,7 @@ Group members then see it in `GET /pipelines` and may retrieve, edit, validate, 
 
 ```text
 src/etlantic_runner/   Application package (API, models, runner, scheduler, tokens)
+frontend/              Streamlit UI (HTTP client only)
 migrations/            Alembic revisions
 tests/                 FastAPI TestClient suite
 ```
@@ -226,7 +256,9 @@ uv run pytest
 uv run ruff check .
 ```
 
-Tests use FastAPI’s `TestClient` (lifespan, migrations, runner, and scheduler) with a dedicated SQLite file under `tests/`.
+API tests use FastAPI’s `TestClient`. UI client tests live under `tests/ui/`
+(OpenAPI drift, httpx client workflows, session helpers). Streamlit pages are
+exercised with Streamlit’s built-in `AppTest` (`tests/ui/test_streamlit_apptest.py`).
 
 ## Operational boundary
 
@@ -235,3 +267,4 @@ This is an **in-process** runner and scheduler, suitable for a single applicatio
 - Multiple API replicas would each restore the same schedules — add leader election or move scheduling/execution to a dedicated worker before horizontal scale-out.
 - Replace SQLite with PostgreSQL (or similar) before multi-process production use.
 - Treat `ETLANTIC_JWT_SECRET` and `ETLANTIC_TOKEN_ENCRYPTION_KEY` as production secrets; rotate JWT secret carefully (existing tokens become invalid).
+- Run FastAPI and Streamlit as separate processes. Keep signing/encryption keys only in the FastAPI environment; configure Streamlit with `ETLANTIC_UI_*` only.

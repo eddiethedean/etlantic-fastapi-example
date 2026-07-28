@@ -25,6 +25,7 @@ def test_group_invitation_and_shared_pipeline_collaboration(
     )
     assert response.status_code == 201, response.text
     group = response.json()
+    assert group["current_user_role"] == "owner"
 
     response = client.post(
         f"/groups/{group['id']}/invitations",
@@ -49,6 +50,7 @@ def test_group_invitation_and_shared_pipeline_collaboration(
         json={"token": invitation["accept_token"]},
     )
     assert response.status_code == 200, response.text
+    assert response.json()["current_user_role"] == "member"
 
     members = client.get(f"/groups/{group['id']}/members", headers=member).json()
     assert {item["user"]["email"] for item in members} == {
@@ -72,7 +74,10 @@ def test_group_invitation_and_shared_pipeline_collaboration(
     assert response.status_code == 201, response.text
 
     visible = client.get("/pipelines", headers=member).json()
-    assert owner_pipeline["id"] in {pipeline["id"] for pipeline in visible}
+    shared = next(p for p in visible if p["id"] == owner_pipeline["id"])
+    assert shared["access_source"] == "group"
+    assert shared["can_delete"] is False
+    assert group["id"] in shared["shared_group_ids"]
     response = client.patch(
         f"/pipelines/{owner_pipeline['id']}",
         headers=member,

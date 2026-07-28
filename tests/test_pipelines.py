@@ -16,6 +16,9 @@ def test_pipeline_crud_and_list(
     assert created["version"] == 1
     assert created["fingerprint"]
     assert created["document"]["schema"] == "etlantic.pipeline/1"
+    assert created["access_source"] == "owned"
+    assert created["can_delete"] is True
+    assert created["shared_group_ids"] == []
 
     listed = client.get("/pipelines", headers=auth_headers)
     assert listed.status_code == 200
@@ -24,6 +27,7 @@ def test_pipeline_crud_and_list(
     fetched = client.get(f"/pipelines/{created['id']}", headers=auth_headers)
     assert fetched.status_code == 200
     assert fetched.json()["id"] == created["id"]
+    assert fetched.json()["access_source"] == "owned"
 
     updated = client.patch(
         f"/pipelines/{created['id']}",
@@ -46,6 +50,30 @@ def test_pipeline_crud_and_list(
         client.get(f"/pipelines/{created['id']}", headers=auth_headers).status_code
         == 404
     )
+
+
+def test_verify_draft_seals_document(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.post(
+        "/pipelines/verify-draft",
+        headers=auth_headers,
+        json={"document": pipeline_document()},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["fingerprint"]
+    assert body["document"]["schema"] == "etlantic.pipeline/1"
+
+    bad = client.post(
+        "/pipelines/verify-draft",
+        headers=auth_headers,
+        json={"document": {"schema": "etlantic.pipeline/1"}},
+    )
+    assert bad.status_code == 200
+    assert bad.json()["ok"] is False
+    assert bad.json()["diagnostics"]
 
 
 def test_pipeline_duplicate_name_conflict(

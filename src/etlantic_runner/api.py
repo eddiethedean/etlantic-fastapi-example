@@ -49,6 +49,8 @@ from etlantic_runner.schemas import (
     GroupRead,
     GroupUpdate,
     PipelineCreate,
+    PipelineDraft,
+    PipelineDraftResult,
     PipelineEdit,
     PipelineGroupRead,
     PipelineRead,
@@ -151,6 +153,53 @@ def group_membership(db: Session, group_id: str, user: User) -> GroupMembership:
     return membership
 
 
+def serialize_group(group: Group, role: str) -> GroupRead:
+    return GroupRead(
+        id=group.id,
+        owner_id=group.owner_id,
+        name=group.name,
+        description=group.description,
+        current_user_role=role,  # type: ignore[arg-type]
+        created_at=group.created_at,
+        updated_at=group.updated_at,
+    )
+
+
+def shared_group_ids_for(db: Session, pipeline: Pipeline, user: User) -> list[str]:
+    return list(
+        db.scalars(
+            select(PipelineGroup.group_id)
+            .join(
+                GroupMembership,
+                and_(
+                    GroupMembership.group_id == PipelineGroup.group_id,
+                    GroupMembership.user_id == user.id,
+                ),
+            )
+            .where(PipelineGroup.pipeline_id == pipeline.id)
+        )
+    )
+
+
+def serialize_pipeline(db: Session, pipeline: Pipeline, user: User) -> PipelineRead:
+    owned = pipeline.owner_id == user.id
+    group_ids = shared_group_ids_for(db, pipeline, user)
+    return PipelineRead(
+        id=pipeline.id,
+        owner_id=pipeline.owner_id,
+        name=pipeline.name,
+        description=pipeline.description,
+        document=pipeline.document,
+        fingerprint=pipeline.fingerprint,
+        version=pipeline.version,
+        access_source="owned" if owned else "group",
+        can_delete=owned,
+        shared_group_ids=group_ids,
+        created_at=pipeline.created_at,
+        updated_at=pipeline.updated_at,
+    )
+
+
 def etlantic_bad_request(exc: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=str(exc))
 
@@ -238,7 +287,7 @@ def deactivate_me(user: CurrentUser, db: DbSession) -> None:
 
 
 @groups.post("", response_model=GroupRead, status_code=status.HTTP_201_CREATED)
-def create_group(body: GroupCreate, user: CurrentUser, db: DbSession) -> Group:
+def create_group(body: GroupCreate, user: CurrentUser, db: DbSession) -> GroupRead:
     group = Group(owner_id=user.id, name=body.name, description=body.description)
     db.add(group)
     try:
@@ -253,28 +302,27 @@ def create_group(body: GroupCreate, user: CurrentUser, db: DbSession) -> Group:
             status_code=409, detail="You already own a group with this name"
         ) from exc
     db.refresh(group)
-    return group
+    return serialize_group(group, "owner")
 
 
 @groups.get("", response_model=list[GroupRead])
-def list_groups(user: CurrentUser, db: DbSession) -> list[Group]:
-    return list(
-        db.scalars(
-            select(Group)
-            .join(GroupMembership)
-            .where(GroupMembership.user_id == user.id)
-            .order_by(Group.updated_at.desc())
-        )
-    )
+def list_groups(user: CurrentUser, db: DbSession) -> list[GroupRead]:
+    rows = db.execute(
+        select(Group, GroupMembership.role)
+        .join(GroupMembership)
+        .where(GroupMembership.user_id == user.id)
+        .order_by(Group.updated_at.desc())
+    ).all()
+    return [serialize_group(group, role) for group, role in rows]
 
 
 @groups.get("/{group_id}", response_model=GroupRead)
-def get_group(group_id: str, user: CurrentUser, db: DbSession) -> Group:
-    group_membership(db, group_id, user)
+def get_group(group_id: str, user: CurrentUser, db: DbSession) -> GroupRead:
+    membership = group_membership(db, group_id, user)
     group = db.get(Group, group_id)
     if group is None:
         raise not_found("Group")
-    return group
+    return serialize_group(group, membership.role)
 
 
 @groups.patch("/{group_id}", response_model=GroupRead)
@@ -283,7 +331,7 @@ def update_group(
     body: GroupUpdate,
     user: CurrentUser,
     db: DbSession,
-) -> Group:
+) -> GroupRead:
     group = db.get(Group, group_id)
     if group is None or group.owner_id != user.id:
         raise not_found("Group")
@@ -299,7 +347,7 @@ def update_group(
             status_code=409, detail="You already own a group with this name"
         ) from exc
     db.refresh(group)
-    return group
+    return serialize_group(group, "owner")
 
 
 @groups.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -458,7 +506,7 @@ def accept_group_invitation(
     body: GroupInvitationAccept,
     user: CurrentUser,
     db: DbSession,
-) -> Group:
+) -> GroupRead:
     token_hash = hashlib.sha256(body.token.encode()).hexdigest()
     invitation = db.scalar(
         select(GroupInvitation).where(
@@ -498,7 +546,7 @@ def accept_group_invitation(
     group = db.get(Group, invitation.group_id)
     if group is None:
         raise not_found("Group")
-    return group
+    return serialize_group(group, "member")
 
 
 @groups.put(
@@ -536,9 +584,9 @@ def list_group_pipelines(
     group_id: str,
     user: CurrentUser,
     db: DbSession,
-) -> list[Pipeline]:
+) -> list[PipelineRead]:
     group_membership(db, group_id, user)
-    return list(
+    pipelines_rows = list(
         db.scalars(
             select(Pipeline)
             .join(PipelineGroup)
@@ -546,6 +594,7 @@ def list_group_pipelines(
             .order_by(Pipeline.updated_at.desc())
         )
     )
+    return [serialize_pipeline(db, pipeline, user) for pipeline in pipelines_rows]
 
 
 @groups.delete(
@@ -668,7 +717,7 @@ def create_pipeline(
     user: CurrentUser,
     db: DbSession,
     settings: AppSettings,
-) -> Pipeline:
+) -> PipelineRead:
     try:
         document, fingerprint = verify_document(body.document, "new", settings)
     except Exception as exc:
@@ -689,7 +738,32 @@ def create_pipeline(
             status_code=409, detail="A pipeline with this name already exists"
         ) from exc
     db.refresh(pipeline)
-    return pipeline
+    return serialize_pipeline(db, pipeline, user)
+
+
+@pipelines.post("/verify-draft", response_model=PipelineDraftResult)
+def verify_pipeline_draft(
+    body: PipelineDraft,
+    user: CurrentUser,
+    settings: AppSettings,
+) -> PipelineDraftResult:
+    _ = user
+    try:
+        document, fingerprint = verify_document(body.document, "draft", settings)
+        validation = service_for(document, "draft", settings).validate("draft")
+        return PipelineDraftResult(
+            ok=bool(validation.get("ok", True)),
+            document=document,
+            fingerprint=fingerprint,
+            diagnostics=list(validation.get("diagnostics") or []),
+        )
+    except Exception as exc:
+        return PipelineDraftResult(
+            ok=False,
+            document=None,
+            fingerprint=None,
+            diagnostics=[{"severity": "error", "message": str(exc)}],
+        )
 
 
 @pipelines.get("", response_model=list[PipelineRead])
@@ -698,7 +772,7 @@ def list_pipelines(
     db: DbSession,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> list[Pipeline]:
+) -> list[PipelineRead]:
     stmt = (
         select(Pipeline)
         .outerjoin(PipelineGroup, PipelineGroup.pipeline_id == Pipeline.id)
@@ -720,12 +794,14 @@ def list_pipelines(
         .offset(offset)
         .limit(limit)
     )
-    return list(db.scalars(stmt))
+    return [serialize_pipeline(db, pipeline, user) for pipeline in db.scalars(stmt)]
 
 
 @pipelines.get("/{pipeline_id}", response_model=PipelineRead)
-def get_pipeline(pipeline_id: str, user: CurrentUser, db: DbSession) -> Pipeline:
-    return accessible_pipeline(db, pipeline_id, user)
+def get_pipeline(
+    pipeline_id: str, user: CurrentUser, db: DbSession
+) -> PipelineRead:
+    return serialize_pipeline(db, accessible_pipeline(db, pipeline_id, user), user)
 
 
 @pipelines.patch("/{pipeline_id}", response_model=PipelineRead)
@@ -735,7 +811,7 @@ def update_pipeline(
     user: CurrentUser,
     db: DbSession,
     settings: AppSettings,
-) -> Pipeline:
+) -> PipelineRead:
     pipeline = accessible_pipeline(db, pipeline_id, user)
     if body.expected_version is not None and body.expected_version != pipeline.version:
         raise HTTPException(status_code=409, detail="Pipeline version conflict")
@@ -761,7 +837,7 @@ def update_pipeline(
             status_code=409, detail="A pipeline with this name already exists"
         ) from exc
     db.refresh(pipeline)
-    return pipeline
+    return serialize_pipeline(db, pipeline, user)
 
 
 @pipelines.post("/{pipeline_id}/edits", response_model=PipelineRead)
@@ -771,7 +847,7 @@ def edit_pipeline(
     user: CurrentUser,
     db: DbSession,
     settings: AppSettings,
-) -> Pipeline:
+) -> PipelineRead:
     pipeline = accessible_pipeline(db, pipeline_id, user)
     try:
         document, fingerprint = apply_document_edit(
@@ -788,7 +864,38 @@ def edit_pipeline(
     pipeline.version += 1
     db.commit()
     db.refresh(pipeline)
-    return pipeline
+    return serialize_pipeline(db, pipeline, user)
+
+
+@pipelines.post("/{pipeline_id}/verify-draft", response_model=PipelineDraftResult)
+def verify_existing_pipeline_draft(
+    pipeline_id: str,
+    body: PipelineDraft,
+    user: CurrentUser,
+    db: DbSession,
+    settings: AppSettings,
+) -> PipelineDraftResult:
+    pipeline = accessible_pipeline(db, pipeline_id, user)
+    try:
+        document, fingerprint = verify_document(
+            body.document, pipeline.id, settings
+        )
+        validation = service_for(document, pipeline.id, settings).validate(
+            pipeline.id
+        )
+        return PipelineDraftResult(
+            ok=bool(validation.get("ok", True)),
+            document=document,
+            fingerprint=fingerprint,
+            diagnostics=list(validation.get("diagnostics") or []),
+        )
+    except Exception as exc:
+        return PipelineDraftResult(
+            ok=False,
+            document=None,
+            fingerprint=None,
+            diagnostics=[{"severity": "error", "message": str(exc)}],
+        )
 
 
 @pipelines.delete("/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT)

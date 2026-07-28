@@ -21,9 +21,15 @@ def build_trigger_args(
         )
         return {unit: int(amount)}
     if trigger_type == "cron":
-        hour = st.number_input("Hour (0-23)", min_value=0, max_value=23, value=2, key=f"{key_prefix}-hour")
+        hour = st.number_input(
+            "Hour (0-23)", min_value=0, max_value=23, value=2, key=f"{key_prefix}-hour"
+        )
         minute = st.number_input(
-            "Minute (0-59)", min_value=0, max_value=59, value=0, key=f"{key_prefix}-minute"
+            "Minute (0-59)",
+            min_value=0,
+            max_value=59,
+            value=0,
+            key=f"{key_prefix}-minute",
         )
         return {"hour": int(hour), "minute": int(minute)}
     if trigger_type == "date":
@@ -38,7 +44,9 @@ def build_trigger_args(
     return None
 
 
-def render_schedule_form(key_prefix: str = "sched") -> tuple[str, str, dict[str, Any], bool] | None:
+def render_schedule_form(
+    key_prefix: str = "sched",
+) -> tuple[str, str, dict[str, Any], bool] | None:
     name = st.text_input("Schedule name", key=f"{key_prefix}-name")
     trigger_type = st.selectbox(
         "Trigger type",

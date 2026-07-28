@@ -78,4 +78,3 @@ def require_admin(user: Annotated[User, Depends(get_current_user)]) -> User:
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 AdminUser = Annotated[User, Depends(require_admin)]
-

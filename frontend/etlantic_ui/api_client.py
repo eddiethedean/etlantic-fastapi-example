@@ -143,7 +143,9 @@ class EtlanticApiClient:
         except ValueError:
             detail = response.text
         if response.is_error:
-            payload = detail.get("detail", detail) if isinstance(detail, dict) else detail
+            payload = (
+                detail.get("detail", detail) if isinstance(detail, dict) else detail
+            )
             raise_for_status(response.status_code, payload)
         return detail
 
@@ -196,9 +198,7 @@ class EtlanticApiClient:
         self._request("DELETE", "/users/me")
 
     def list_users(self, *, limit: int = 100, offset: int = 0) -> list[UserRead]:
-        rows = self._request(
-            "GET", "/users", params={"limit": limit, "offset": offset}
-        )
+        rows = self._request("GET", "/users", params={"limit": limit, "offset": offset})
         return [UserRead.model_validate(row) for row in rows]
 
     # --- pipelines ---
@@ -405,9 +405,7 @@ class EtlanticApiClient:
         return [ApiTokenRead.model_validate(row) for row in rows]
 
     def get_token(self, token_id: str) -> ApiTokenRead:
-        return ApiTokenRead.model_validate(
-            self._request("GET", f"/tokens/{token_id}")
-        )
+        return ApiTokenRead.model_validate(self._request("GET", f"/tokens/{token_id}"))
 
     def update_token(
         self,
@@ -469,9 +467,7 @@ class EtlanticApiClient:
         self._request("DELETE", f"/pipelines/{pipeline_id}/token-grants/{grant_id}")
 
     # --- groups ---
-    def create_group(
-        self, *, name: str, description: str | None = None
-    ) -> GroupRead:
+    def create_group(self, *, name: str, description: str | None = None) -> GroupRead:
         return GroupRead.model_validate(
             self._request(
                 "POST",
@@ -516,9 +512,7 @@ class EtlanticApiClient:
     def remove_group_member(self, group_id: str, member_user_id: str) -> None:
         self._request("DELETE", f"/groups/{group_id}/members/{member_user_id}")
 
-    def create_invitation(
-        self, group_id: str, *, email: str
-    ) -> GroupInvitationCreated:
+    def create_invitation(self, group_id: str, *, email: str) -> GroupInvitationCreated:
         return GroupInvitationCreated.model_validate(
             self._request(
                 "POST",
@@ -536,9 +530,7 @@ class EtlanticApiClient:
 
     def accept_invitation(self, token: str) -> GroupRead:
         return GroupRead.model_validate(
-            self._request(
-                "POST", "/group-invitations/accept", json={"token": token}
-            )
+            self._request("POST", "/group-invitations/accept", json={"token": token})
         )
 
     def add_pipeline_to_group(

@@ -59,8 +59,12 @@ def render_auth() -> None:
         with st.form("register"):
             email = st.text_input("Email", key="reg-email")
             display_name = st.text_input("Display name", key="reg-name")
-            password = st.text_input("Password (min 12 chars)", type="password", key="reg-pass")
-            confirm = st.text_input("Confirm password", type="password", key="reg-confirm")
+            password = st.text_input(
+                "Password (min 12 chars)", type="password", key="reg-pass"
+            )
+            confirm = st.text_input(
+                "Confirm password", type="password", key="reg-confirm"
+            )
             submitted = st.form_submit_button("Create account")
         if submitted:
             if len(password) < 12:
@@ -162,7 +166,9 @@ def render_dashboard() -> None:
         st.switch_page("pages/06_Groups.py")
 
     if pending_invite_token():
-        st.info("You have a pending group invitation token. Open the Accept invitation tab on refresh or use Groups.")
+        st.info(
+            "You have a pending group invitation token. Open the Accept invitation tab on refresh or use Groups."
+        )
 
     st.subheader("Recent runs")
     if not runs:

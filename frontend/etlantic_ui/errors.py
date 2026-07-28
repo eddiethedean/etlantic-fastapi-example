@@ -54,7 +54,9 @@ def format_detail(detail: Any) -> str:
         parts: list[str] = []
         for item in detail:
             if isinstance(item, dict):
-                loc = ".".join(str(part) for part in item.get("loc", []) if part != "body")
+                loc = ".".join(
+                    str(part) for part in item.get("loc", []) if part != "body"
+                )
                 msg = item.get("msg", "Invalid value")
                 parts.append(f"{loc}: {msg}" if loc else str(msg))
             else:

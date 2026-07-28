@@ -55,7 +55,9 @@ for schedule in filtered:
         f"{pipeline_names.get(schedule.pipeline_id, schedule.pipeline_id)} · "
         f"`{schedule.trigger_type}` · next {format_dt(schedule.next_run_at)}"
     )
-    if cols[1].button("Disable" if schedule.enabled else "Enable", key=f"e-{schedule.id}"):
+    if cols[1].button(
+        "Disable" if schedule.enabled else "Enable", key=f"e-{schedule.id}"
+    ):
         try:
             client.update_schedule(schedule.id, enabled=not schedule.enabled)
             st.rerun()

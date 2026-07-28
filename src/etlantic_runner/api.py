@@ -292,9 +292,7 @@ def create_group(body: GroupCreate, user: CurrentUser, db: DbSession) -> GroupRe
     db.add(group)
     try:
         db.flush()
-        db.add(
-            GroupMembership(group_id=group.id, user_id=user.id, role="owner")
-        )
+        db.add(GroupMembership(group_id=group.id, user_id=user.id, role="owner"))
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -798,9 +796,7 @@ def list_pipelines(
 
 
 @pipelines.get("/{pipeline_id}", response_model=PipelineRead)
-def get_pipeline(
-    pipeline_id: str, user: CurrentUser, db: DbSession
-) -> PipelineRead:
+def get_pipeline(pipeline_id: str, user: CurrentUser, db: DbSession) -> PipelineRead:
     return serialize_pipeline(db, accessible_pipeline(db, pipeline_id, user), user)
 
 
@@ -877,12 +873,8 @@ def verify_existing_pipeline_draft(
 ) -> PipelineDraftResult:
     pipeline = accessible_pipeline(db, pipeline_id, user)
     try:
-        document, fingerprint = verify_document(
-            body.document, pipeline.id, settings
-        )
-        validation = service_for(document, pipeline.id, settings).validate(
-            pipeline.id
-        )
+        document, fingerprint = verify_document(body.document, pipeline.id, settings)
+        validation = service_for(document, pipeline.id, settings).validate(pipeline.id)
         return PipelineDraftResult(
             ok=bool(validation.get("ok", True)),
             document=document,
@@ -993,9 +985,7 @@ def revoke_pipeline_token(
     if grant is None:
         raise not_found("Token grant")
     token = db.get(ApiToken, grant.token_id)
-    if pipeline.owner_id != user.id and (
-        token is None or token.owner_id != user.id
-    ):
+    if pipeline.owner_id != user.id and (token is None or token.owner_id != user.id):
         raise HTTPException(
             status_code=403,
             detail="Only the pipeline or token owner can revoke this grant",

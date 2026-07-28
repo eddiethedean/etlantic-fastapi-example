@@ -89,9 +89,7 @@ def test_group_invitation_and_shared_pipeline_collaboration(
     assert response.status_code == 200, response.text
     assert response.json()["description"] == "Edited by a group member"
     assert (
-        client.delete(
-            f"/pipelines/{owner_pipeline['id']}", headers=member
-        ).status_code
+        client.delete(f"/pipelines/{owner_pipeline['id']}", headers=member).status_code
         == 404
     )
 

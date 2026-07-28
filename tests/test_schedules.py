@@ -5,9 +5,7 @@ from fastapi.testclient import TestClient
 from tests.helpers import create_pipeline
 
 
-def test_schedule_lifecycle(
-    client: TestClient, auth_headers: dict[str, str]
-) -> None:
+def test_schedule_lifecycle(client: TestClient, auth_headers: dict[str, str]) -> None:
     pipeline = create_pipeline(client, auth_headers)
 
     created = client.post(

@@ -117,14 +117,10 @@ def login_and_store(email: str, password: str) -> UserRead:
         client.close()
 
 
-def register_and_login(
-    *, email: str, display_name: str, password: str
-) -> UserRead:
+def register_and_login(*, email: str, display_name: str, password: str) -> UserRead:
     client = get_api_client()
     try:
-        client.register_user(
-            email=email, display_name=display_name, password=password
-        )
+        client.register_user(email=email, display_name=display_name, password=password)
     finally:
         client.close()
     return login_and_store(email, password)

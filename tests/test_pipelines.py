@@ -8,9 +8,7 @@ from tests.helpers import create_pipeline, pipeline_document, wait_for_run
 def test_pipeline_crud_and_list(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    created = create_pipeline(
-        client, auth_headers, name="alpha", description="first"
-    )
+    created = create_pipeline(client, auth_headers, name="alpha", description="first")
     assert created["name"] == "alpha"
     assert created["description"] == "first"
     assert created["version"] == 1
@@ -172,9 +170,7 @@ def test_run_pipeline_and_list_runs(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     pipeline = create_pipeline(client, auth_headers)
-    response = client.post(
-        f"/pipelines/{pipeline['id']}/runs", headers=auth_headers
-    )
+    response = client.post(f"/pipelines/{pipeline['id']}/runs", headers=auth_headers)
     assert response.status_code == 202, response.text
     run = response.json()
     assert run["pipeline_id"] == pipeline["id"]
@@ -206,12 +202,9 @@ def test_run_ownership_is_enforced(
     other_auth_headers: dict[str, str],
 ) -> None:
     pipeline = create_pipeline(client, auth_headers)
-    run = client.post(
-        f"/pipelines/{pipeline['id']}/runs", headers=auth_headers
-    ).json()
+    run = client.post(f"/pipelines/{pipeline['id']}/runs", headers=auth_headers).json()
     assert (
-        client.get(f"/runs/{run['id']}", headers=other_auth_headers).status_code
-        == 404
+        client.get(f"/runs/{run['id']}", headers=other_auth_headers).status_code == 404
     )
 
 

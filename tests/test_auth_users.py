@@ -49,9 +49,7 @@ def test_register_rejects_duplicate_email(
     assert response.json()["detail"] == "Email is already registered"
 
 
-def test_register_rejects_short_password(
-    client: TestClient, unique_email: str
-) -> None:
+def test_register_rejects_short_password(client: TestClient, unique_email: str) -> None:
     response = client.post(
         "/users",
         json={

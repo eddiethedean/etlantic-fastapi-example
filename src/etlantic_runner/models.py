@@ -265,9 +265,7 @@ class PipelineGroup(TimestampMixin, Base):
     group_id: Mapped[str] = mapped_column(
         ForeignKey("groups.id", ondelete="CASCADE"), index=True
     )
-    added_by_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
+    added_by_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
 
     pipeline: Mapped[Pipeline] = relationship(back_populates="group_links")
     group: Mapped[Group] = relationship(back_populates="pipeline_links")

@@ -54,15 +54,15 @@ def _register_user(
         settings=backend["settings"],
         transport=backend["transport"],
     )
-    client.register_user(
-        email=email, display_name=display_name, password=PASSWORD
-    )
+    client.register_user(email=email, display_name=display_name, password=PASSWORD)
     token = client.login(email=email, password=PASSWORD)
     client.with_token(token.access_token)
     return client.get_me(), token
 
 
-def _auth_session(at: AppTest, user: UserRead, access_token: str, expires_in: int = 1800) -> None:
+def _auth_session(
+    at: AppTest, user: UserRead, access_token: str, expires_in: int = 1800
+) -> None:
     at.session_state["access_token"] = access_token
     at.session_state["token_expires_at"] = (
         datetime.now(UTC) + timedelta(seconds=expires_in)
@@ -95,7 +95,9 @@ def test_register_rejects_short_password_client_side(backend: dict) -> None:
     # Register tab widgets follow sign-in fields in declaration order.
     # Sign-in: email, password; Register: email, display_name, password, confirm;
     # Invite: token.
-    email_box = next(t for t in at.text_input if t.label == "Email" and t.key == "reg-email")
+    email_box = next(
+        t for t in at.text_input if t.label == "Email" and t.key == "reg-email"
+    )
     name_box = next(t for t in at.text_input if t.key == "reg-name")
     pass_box = next(t for t in at.text_input if t.key == "reg-pass")
     confirm_box = next(t for t in at.text_input if t.key == "reg-confirm")

@@ -222,9 +222,7 @@ with tabs[4]:
         runs = []
     st.subheader("Recent runs for this pipeline")
     for run in runs:
-        st.write(
-            f"`{run.status}` · `{run.id}` · {format_dt(run.created_at)}"
-        )
+        st.write(f"`{run.status}` · `{run.id}` · {format_dt(run.created_at)}")
 
 with tabs[5]:
     st.caption(
@@ -245,9 +243,7 @@ with tabs[5]:
         except ApiError as exc:
             render_error(exc)
     try:
-        schedules = [
-            s for s in client.list_schedules() if s.pipeline_id == pipeline.id
-        ]
+        schedules = [s for s in client.list_schedules() if s.pipeline_id == pipeline.id]
     except ApiError as exc:
         render_error(exc)
         schedules = []
@@ -274,7 +270,9 @@ with tabs[5]:
                 render_error(exc)
 
 with tabs[6]:
-    st.caption("Token values are never shown. Grants bind metadata-only tokens to assets.")
+    st.caption(
+        "Token values are never shown. Grants bind metadata-only tokens to assets."
+    )
     bindings = asset_bindings(pipeline.document)
     try:
         tokens = client.list_tokens()
@@ -307,7 +305,10 @@ with tabs[6]:
             t
             for t in tokens
             if t.is_active
-            and ((operation == "read" and t.allow_read) or (operation == "write" and t.allow_write))
+            and (
+                (operation == "read" and t.allow_read)
+                or (operation == "write" and t.allow_write)
+            )
         ]
         if not eligible:
             st.warning("No active tokens allow this operation.")

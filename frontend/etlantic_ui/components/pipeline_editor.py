@@ -18,9 +18,7 @@ def render_pipeline_editor(
     existing = get_editor_state(pipeline_id)
     if existing is None:
         text = json.dumps(document, indent=2, sort_keys=True)
-        set_editor_state(
-            pipeline_id, text, version=version, fingerprint=fingerprint
-        )
+        set_editor_state(pipeline_id, text, version=version, fingerprint=fingerprint)
     else:
         text = existing["text"]
 
@@ -28,9 +26,7 @@ def render_pipeline_editor(
     with col1:
         if st.button("Format JSON", key=f"fmt-{pipeline_id}"):
             try:
-                parsed = json.loads(
-                    st.session_state.get(f"editor-{pipeline_id}", text)
-                )
+                parsed = json.loads(st.session_state.get(f"editor-{pipeline_id}", text))
                 text = json.dumps(parsed, indent=2, sort_keys=True)
                 set_editor_state(
                     pipeline_id,
@@ -76,9 +72,7 @@ def render_pipeline_editor(
         pipeline_id,
         edited,
         version=st.session_state.get("pipeline_editor_version", version),
-        fingerprint=st.session_state.get(
-            "pipeline_editor_fingerprint", fingerprint
-        ),
+        fingerprint=st.session_state.get("pipeline_editor_fingerprint", fingerprint),
     )
     st.caption(
         f"Base version `{st.session_state.get('pipeline_editor_version', version)}` · "

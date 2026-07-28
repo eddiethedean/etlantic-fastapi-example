@@ -68,8 +68,7 @@ def test_token_crud_never_exposes_secret(
     deleted = client.delete(f"/tokens/{created['id']}", headers=auth_headers)
     assert deleted.status_code == 204
     assert (
-        client.get(f"/tokens/{created['id']}", headers=auth_headers).status_code
-        == 404
+        client.get(f"/tokens/{created['id']}", headers=auth_headers).status_code == 404
     )
 
 
@@ -137,9 +136,7 @@ def test_token_ownership_is_enforced(
         == 404
     )
     assert (
-        client.delete(
-            f"/tokens/{token['id']}", headers=other_auth_headers
-        ).status_code
+        client.delete(f"/tokens/{token['id']}", headers=other_auth_headers).status_code
         == 404
     )
 
@@ -193,9 +190,7 @@ def test_token_grants_lifecycle_and_runtime_use(
         == 404
     )
 
-    run = client.post(
-        f"/pipelines/{pipeline['id']}/runs", headers=auth_headers
-    ).json()
+    run = client.post(f"/pipelines/{pipeline['id']}/runs", headers=auth_headers).json()
     finished = wait_for_run(client, auth_headers, run["id"])
     assert finished["status"] in {"succeeded", "partial"}
 

@@ -42,9 +42,7 @@ if payload and st.button("Save token", type="primary"):
             allow_write=bool(payload["allow_write"]),
         )
         clear_token_form_widgets("create")
-        st.success(
-            f"Stored `{created.name}` ending in {mask_token(created.last_four)}"
-        )
+        st.success(f"Stored `{created.name}` ending in {mask_token(created.last_four)}")
         st.rerun()
     except ApiError as exc:
         render_error(exc)

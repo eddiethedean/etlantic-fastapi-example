@@ -1,5 +1,9 @@
 # Streamlit Frontend Implementation Plan
 
+> **Status:** Phases 0–4 are implemented in `frontend/`. Phase 5 (visual graph
+> builder) and several §11 backend enhancements remain future work. See
+> [Streamlit UI](../streamlit-ui.md) for the current product docs.
+
 ## 1. Purpose
 
 Build a Streamlit web application for the ETLantic Runner API that lets users:

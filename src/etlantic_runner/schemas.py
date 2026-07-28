@@ -38,6 +38,66 @@ class UserRead(ORMModel):
     updated_at: datetime
 
 
+class GroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str | None = None
+
+
+class GroupUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+
+
+class GroupRead(ORMModel):
+    id: str
+    owner_id: str
+    name: str
+    description: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GroupMemberRead(ORMModel):
+    id: str
+    group_id: str
+    user_id: str
+    role: Literal["owner", "member"]
+    user: UserRead
+    created_at: datetime
+
+
+class GroupInvitationCreate(BaseModel):
+    email: EmailStr
+
+
+class GroupInvitationAccept(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+
+
+class GroupInvitationRead(ORMModel):
+    id: str
+    group_id: str
+    email: EmailStr
+    invited_by_id: str
+    status: Literal["pending", "accepted", "revoked", "expired"]
+    expires_at: datetime
+    accepted_by_id: str | None
+    accepted_at: datetime | None
+    created_at: datetime
+
+
+class GroupInvitationCreated(GroupInvitationRead):
+    accept_token: str
+
+
+class PipelineGroupRead(ORMModel):
+    id: str
+    pipeline_id: str
+    group_id: str
+    added_by_id: str
+    created_at: datetime
+
+
 class Token(BaseModel):
     access_token: str
     token_type: Literal["bearer"] = "bearer"

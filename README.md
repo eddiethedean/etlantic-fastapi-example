@@ -48,6 +48,10 @@ Use the returned token as `Authorization: Bearer <token>`.
 - `GET/PATCH/DELETE /schedules/{id}`
 - `POST/GET/PATCH/DELETE /tokens` for encrypted user API tokens
 - `POST/GET/DELETE /pipelines/{id}/token-grants`
+- `POST/GET/PATCH/DELETE /groups`
+- `POST/GET/DELETE /groups/{id}/invitations`
+- `POST /group-invitations/accept`
+- `PUT/GET/DELETE /groups/{id}/pipelines/{pipeline_id}`
 
 Pipeline documents must be sealed `etlantic.pipeline/1` documents with a valid
 fingerprint. This prevents saving a payload that was changed after ETLantic
@@ -113,6 +117,35 @@ Secret values refuse serialization and do not enter pipeline documents,
 reports, API responses, or application logs. Keep the encryption key outside
 the database and back it up securely; losing it makes stored tokens
 unrecoverable.
+
+## Groups and shared pipelines
+
+Creating a group also creates its owner membership. Any current member may
+invite another email address. Invitation acceptance tokens are random,
+single-use, stored only as SHA-256 hashes, and expire after seven days. The raw
+acceptance token is returned only in the invitation-creation response so the
+application can deliver it through its chosen email or messaging service.
+
+```json
+POST /groups/{group_id}/invitations
+{"email": "grace@example.com"}
+```
+
+```json
+POST /group-invitations/accept
+{"token": "the-one-time-acceptance-token"}
+```
+
+A user may add only a pipeline they own to a group they belong to:
+
+```text
+PUT /groups/{group_id}/pipelines/{pipeline_id}
+```
+
+Group members then see the pipeline in `GET /pipelines` and may retrieve, edit,
+validate, plan, run, and schedule it. Ownership remains unchanged: only the
+pipeline owner may delete it or remove it from a group. Group owners may remove
+members or delete the group; ordinary members may leave and may invite others.
 
 ## Operational boundary
 

@@ -53,6 +53,9 @@ class User(TimestampMixin, Base):
     api_tokens: Mapped[list[ApiToken]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
+    group_memberships: Mapped[list[GroupMembership]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Pipeline(TimestampMixin, Base):
@@ -79,6 +82,9 @@ class Pipeline(TimestampMixin, Base):
         back_populates="pipeline", cascade="all, delete-orphan"
     )
     token_grants: Mapped[list[PipelineTokenGrant]] = relationship(
+        back_populates="pipeline", cascade="all, delete-orphan"
+    )
+    group_links: Mapped[list[PipelineGroup]] = relationship(
         back_populates="pipeline", cascade="all, delete-orphan"
     )
 
@@ -178,3 +184,91 @@ class PipelineTokenGrant(TimestampMixin, Base):
 
     pipeline: Mapped[Pipeline] = relationship(back_populates="token_grants")
     token: Mapped[ApiToken] = relationship(back_populates="grants")
+
+
+class Group(TimestampMixin, Base):
+    __tablename__ = "groups"
+    __table_args__ = (UniqueConstraint("owner_id", "name", name="uq_group_owner_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    owner_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str | None] = mapped_column(Text)
+
+    owner: Mapped[User] = relationship(foreign_keys=[owner_id])
+    memberships: Mapped[list[GroupMembership]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+    invitations: Mapped[list[GroupInvitation]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+    pipeline_links: Mapped[list[PipelineGroup]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+
+
+class GroupMembership(TimestampMixin, Base):
+    __tablename__ = "group_memberships"
+    __table_args__ = (
+        UniqueConstraint("group_id", "user_id", name="uq_group_membership"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    group_id: Mapped[str] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), default="member")
+
+    group: Mapped[Group] = relationship(back_populates="memberships")
+    user: Mapped[User] = relationship(back_populates="group_memberships")
+
+
+class GroupInvitation(TimestampMixin, Base):
+    __tablename__ = "group_invitations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    group_id: Mapped[str] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    invited_by_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_by_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    group: Mapped[Group] = relationship(back_populates="invitations")
+    invited_by: Mapped[User] = relationship(foreign_keys=[invited_by_id])
+    accepted_by: Mapped[User | None] = relationship(foreign_keys=[accepted_by_id])
+
+
+class PipelineGroup(TimestampMixin, Base):
+    __tablename__ = "pipeline_groups"
+    __table_args__ = (
+        UniqueConstraint("pipeline_id", "group_id", name="uq_pipeline_group"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    pipeline_id: Mapped[str] = mapped_column(
+        ForeignKey("pipelines.id", ondelete="CASCADE"), index=True
+    )
+    group_id: Mapped[str] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), index=True
+    )
+    added_by_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
+
+    pipeline: Mapped[Pipeline] = relationship(back_populates="group_links")
+    group: Mapped[Group] = relationship(back_populates="pipeline_links")
+    added_by: Mapped[User] = relationship()

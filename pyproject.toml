@@ -36,6 +36,7 @@ packages = ["src/etlantic_runner"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
 
 [tool.ruff]

@@ -45,8 +45,8 @@ class TokenCipher:
 class UserTokenProvider:
     """Resolve encrypted tokens for one run owner without exposing their values."""
 
-    def __init__(self, owner_id: str, settings: Settings) -> None:
-        self.owner_id = owner_id
+    def __init__(self, allowed_token_ids: set[str], settings: Settings) -> None:
+        self.allowed_token_ids = frozenset(allowed_token_ids)
         self.cipher = TokenCipher(settings.token_encryption_key)
         self.descriptor = SecretProviderDescriptor(
             name="user-tokens",
@@ -71,7 +71,11 @@ class UserTokenProvider:
             self._deny(context, "Token purpose must be read or write")
         with SessionLocal() as session:
             token = session.get(ApiToken, reference.name)
-            if token is None or token.owner_id != self.owner_id or not token.is_active:
+            if (
+                token is None
+                or token.id not in self.allowed_token_ids
+                or not token.is_active
+            ):
                 self._deny(context, "Token is unavailable")
             if purpose == "read" and not token.allow_read:
                 self._deny(context, "Token is not permitted for reads")

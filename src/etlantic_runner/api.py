@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -8,7 +11,7 @@ from alembic import command
 from alembic.config import Config
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,7 +24,11 @@ from etlantic_runner.etlantic_service import (
 )
 from etlantic_runner.models import (
     ApiToken,
+    Group,
+    GroupInvitation,
+    GroupMembership,
     Pipeline,
+    PipelineGroup,
     PipelineRun,
     PipelineTokenGrant,
     Schedule,
@@ -33,8 +40,17 @@ from etlantic_runner.schemas import (
     ApiTokenCreate,
     ApiTokenRead,
     ApiTokenUpdate,
+    GroupCreate,
+    GroupInvitationAccept,
+    GroupInvitationCreate,
+    GroupInvitationCreated,
+    GroupInvitationRead,
+    GroupMemberRead,
+    GroupRead,
+    GroupUpdate,
     PipelineCreate,
     PipelineEdit,
+    PipelineGroupRead,
     PipelineRead,
     PipelineTokenGrantCreate,
     PipelineTokenGrantRead,
@@ -79,6 +95,26 @@ def owned_pipeline(db: Session, pipeline_id: str, user: User) -> Pipeline:
     return pipeline
 
 
+def accessible_pipeline(db: Session, pipeline_id: str, user: User) -> Pipeline:
+    pipeline = db.get(Pipeline, pipeline_id)
+    if pipeline is None:
+        raise not_found("Pipeline")
+    if pipeline.owner_id == user.id:
+        return pipeline
+    membership = db.scalar(
+        select(GroupMembership.id)
+        .join(PipelineGroup, PipelineGroup.group_id == GroupMembership.group_id)
+        .where(
+            PipelineGroup.pipeline_id == pipeline.id,
+            GroupMembership.user_id == user.id,
+        )
+        .limit(1)
+    )
+    if membership is None:
+        raise not_found("Pipeline")
+    return pipeline
+
+
 def owned_schedule(db: Session, schedule_id: str, user: User) -> Schedule:
     schedule = db.scalar(
         select(Schedule).where(
@@ -103,6 +139,18 @@ def owned_token(db: Session, token_id: str, user: User) -> ApiToken:
     return token
 
 
+def group_membership(db: Session, group_id: str, user: User) -> GroupMembership:
+    membership = db.scalar(
+        select(GroupMembership).where(
+            GroupMembership.group_id == group_id,
+            GroupMembership.user_id == user.id,
+        )
+    )
+    if membership is None:
+        raise not_found("Group")
+    return membership
+
+
 def etlantic_bad_request(exc: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=str(exc))
 
@@ -113,6 +161,8 @@ pipelines = APIRouter(prefix="/pipelines", tags=["pipelines"])
 runs = APIRouter(prefix="/runs", tags=["runs"])
 schedules = APIRouter(prefix="/schedules", tags=["schedules"])
 tokens = APIRouter(prefix="/tokens", tags=["tokens"])
+groups = APIRouter(prefix="/groups", tags=["groups"])
+group_invitations = APIRouter(prefix="/group-invitations", tags=["groups"])
 
 
 @users.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -184,6 +234,341 @@ def list_users(
 @users.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 def deactivate_me(user: CurrentUser, db: DbSession) -> None:
     user.is_active = False
+    db.commit()
+
+
+@groups.post("", response_model=GroupRead, status_code=status.HTTP_201_CREATED)
+def create_group(body: GroupCreate, user: CurrentUser, db: DbSession) -> Group:
+    group = Group(owner_id=user.id, name=body.name, description=body.description)
+    db.add(group)
+    try:
+        db.flush()
+        db.add(
+            GroupMembership(group_id=group.id, user_id=user.id, role="owner")
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="You already own a group with this name"
+        ) from exc
+    db.refresh(group)
+    return group
+
+
+@groups.get("", response_model=list[GroupRead])
+def list_groups(user: CurrentUser, db: DbSession) -> list[Group]:
+    return list(
+        db.scalars(
+            select(Group)
+            .join(GroupMembership)
+            .where(GroupMembership.user_id == user.id)
+            .order_by(Group.updated_at.desc())
+        )
+    )
+
+
+@groups.get("/{group_id}", response_model=GroupRead)
+def get_group(group_id: str, user: CurrentUser, db: DbSession) -> Group:
+    group_membership(db, group_id, user)
+    group = db.get(Group, group_id)
+    if group is None:
+        raise not_found("Group")
+    return group
+
+
+@groups.patch("/{group_id}", response_model=GroupRead)
+def update_group(
+    group_id: str,
+    body: GroupUpdate,
+    user: CurrentUser,
+    db: DbSession,
+) -> Group:
+    group = db.get(Group, group_id)
+    if group is None or group.owner_id != user.id:
+        raise not_found("Group")
+    if body.name is not None:
+        group.name = body.name
+    if "description" in body.model_fields_set:
+        group.description = body.description
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="You already own a group with this name"
+        ) from exc
+    db.refresh(group)
+    return group
+
+
+@groups.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_group(group_id: str, user: CurrentUser, db: DbSession) -> None:
+    group = db.get(Group, group_id)
+    if group is None or group.owner_id != user.id:
+        raise not_found("Group")
+    db.delete(group)
+    db.commit()
+
+
+@groups.get("/{group_id}/members", response_model=list[GroupMemberRead])
+def list_group_members(
+    group_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> list[GroupMembership]:
+    group_membership(db, group_id, user)
+    return list(
+        db.scalars(
+            select(GroupMembership)
+            .where(GroupMembership.group_id == group_id)
+            .order_by(GroupMembership.created_at)
+        )
+    )
+
+
+@groups.delete(
+    "/{group_id}/members/{member_user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_group_member(
+    group_id: str,
+    member_user_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> None:
+    caller = group_membership(db, group_id, user)
+    target = db.scalar(
+        select(GroupMembership).where(
+            GroupMembership.group_id == group_id,
+            GroupMembership.user_id == member_user_id,
+        )
+    )
+    if target is None:
+        raise not_found("Group member")
+    if caller.role != "owner" and target.user_id != user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the group owner can remove others",
+        )
+    if target.role == "owner":
+        raise HTTPException(
+            status_code=409,
+            detail="The group owner cannot leave; delete the group instead",
+        )
+    db.delete(target)
+    db.commit()
+
+
+@groups.post(
+    "/{group_id}/invitations",
+    response_model=GroupInvitationCreated,
+    status_code=status.HTTP_201_CREATED,
+)
+def invite_to_group(
+    group_id: str,
+    body: GroupInvitationCreate,
+    user: CurrentUser,
+    db: DbSession,
+) -> dict[str, Any]:
+    group_membership(db, group_id, user)
+    email = str(body.email).lower()
+    existing_user = db.scalar(select(User).where(User.email == email))
+    if existing_user is not None:
+        existing_member = db.scalar(
+            select(GroupMembership.id).where(
+                GroupMembership.group_id == group_id,
+                GroupMembership.user_id == existing_user.id,
+            )
+        )
+        if existing_member is not None:
+            raise HTTPException(status_code=409, detail="User is already a member")
+    pending = db.scalar(
+        select(GroupInvitation).where(
+            GroupInvitation.group_id == group_id,
+            GroupInvitation.email == email,
+            GroupInvitation.status == "pending",
+        )
+    )
+    if pending is not None:
+        raise HTTPException(status_code=409, detail="An invitation is already pending")
+    accept_token = secrets.token_urlsafe(32)
+    invitation = GroupInvitation(
+        group_id=group_id,
+        email=email,
+        invited_by_id=user.id,
+        token_hash=hashlib.sha256(accept_token.encode()).hexdigest(),
+        status="pending",
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+    )
+    db.add(invitation)
+    db.commit()
+    db.refresh(invitation)
+    return {
+        **GroupInvitationRead.model_validate(invitation).model_dump(),
+        "accept_token": accept_token,
+    }
+
+
+@groups.get(
+    "/{group_id}/invitations",
+    response_model=list[GroupInvitationRead],
+)
+def list_group_invitations(
+    group_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> list[GroupInvitation]:
+    group_membership(db, group_id, user)
+    return list(
+        db.scalars(
+            select(GroupInvitation)
+            .where(GroupInvitation.group_id == group_id)
+            .order_by(GroupInvitation.created_at.desc())
+        )
+    )
+
+
+@groups.delete(
+    "/{group_id}/invitations/{invitation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_group_invitation(
+    group_id: str,
+    invitation_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> None:
+    group_membership(db, group_id, user)
+    invitation = db.scalar(
+        select(GroupInvitation).where(
+            GroupInvitation.id == invitation_id,
+            GroupInvitation.group_id == group_id,
+            GroupInvitation.status == "pending",
+        )
+    )
+    if invitation is None:
+        raise not_found("Invitation")
+    invitation.status = "revoked"
+    db.commit()
+
+
+@group_invitations.post("/accept", response_model=GroupRead)
+def accept_group_invitation(
+    body: GroupInvitationAccept,
+    user: CurrentUser,
+    db: DbSession,
+) -> Group:
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    invitation = db.scalar(
+        select(GroupInvitation).where(
+            GroupInvitation.token_hash == token_hash,
+            GroupInvitation.status == "pending",
+        )
+    )
+    if invitation is None:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+    expires_at = invitation.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if expires_at <= datetime.now(UTC):
+        invitation.status = "expired"
+        db.commit()
+        raise HTTPException(status_code=410, detail="Invitation has expired")
+    if invitation.email != user.email.lower():
+        raise HTTPException(
+            status_code=403,
+            detail="Invitation belongs to another email",
+        )
+    db.add(
+        GroupMembership(
+            group_id=invitation.group_id,
+            user_id=user.id,
+            role="member",
+        )
+    )
+    invitation.status = "accepted"
+    invitation.accepted_by_id = user.id
+    invitation.accepted_at = datetime.now(UTC)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="User is already a member") from exc
+    group = db.get(Group, invitation.group_id)
+    if group is None:
+        raise not_found("Group")
+    return group
+
+
+@groups.put(
+    "/{group_id}/pipelines/{pipeline_id}",
+    response_model=PipelineGroupRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_pipeline_to_group(
+    group_id: str,
+    pipeline_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> PipelineGroup:
+    group_membership(db, group_id, user)
+    pipeline = owned_pipeline(db, pipeline_id, user)
+    link = PipelineGroup(
+        group_id=group_id,
+        pipeline_id=pipeline.id,
+        added_by_id=user.id,
+    )
+    db.add(link)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Pipeline is already in this group"
+        ) from exc
+    db.refresh(link)
+    return link
+
+
+@groups.get("/{group_id}/pipelines", response_model=list[PipelineRead])
+def list_group_pipelines(
+    group_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> list[Pipeline]:
+    group_membership(db, group_id, user)
+    return list(
+        db.scalars(
+            select(Pipeline)
+            .join(PipelineGroup)
+            .where(PipelineGroup.group_id == group_id)
+            .order_by(Pipeline.updated_at.desc())
+        )
+    )
+
+
+@groups.delete(
+    "/{group_id}/pipelines/{pipeline_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_pipeline_from_group(
+    group_id: str,
+    pipeline_id: str,
+    user: CurrentUser,
+    db: DbSession,
+) -> None:
+    group_membership(db, group_id, user)
+    pipeline = owned_pipeline(db, pipeline_id, user)
+    link = db.scalar(
+        select(PipelineGroup).where(
+            PipelineGroup.group_id == group_id,
+            PipelineGroup.pipeline_id == pipeline.id,
+        )
+    )
+    if link is None:
+        raise not_found("Shared pipeline")
+    db.delete(link)
     db.commit()
 
 
@@ -316,7 +701,21 @@ def list_pipelines(
 ) -> list[Pipeline]:
     stmt = (
         select(Pipeline)
-        .where(Pipeline.owner_id == user.id)
+        .outerjoin(PipelineGroup, PipelineGroup.pipeline_id == Pipeline.id)
+        .outerjoin(
+            GroupMembership,
+            and_(
+                GroupMembership.group_id == PipelineGroup.group_id,
+                GroupMembership.user_id == user.id,
+            ),
+        )
+        .where(
+            or_(
+                Pipeline.owner_id == user.id,
+                GroupMembership.user_id == user.id,
+            )
+        )
+        .distinct()
         .order_by(Pipeline.updated_at.desc())
         .offset(offset)
         .limit(limit)
@@ -326,7 +725,7 @@ def list_pipelines(
 
 @pipelines.get("/{pipeline_id}", response_model=PipelineRead)
 def get_pipeline(pipeline_id: str, user: CurrentUser, db: DbSession) -> Pipeline:
-    return owned_pipeline(db, pipeline_id, user)
+    return accessible_pipeline(db, pipeline_id, user)
 
 
 @pipelines.patch("/{pipeline_id}", response_model=PipelineRead)
@@ -337,7 +736,7 @@ def update_pipeline(
     db: DbSession,
     settings: AppSettings,
 ) -> Pipeline:
-    pipeline = owned_pipeline(db, pipeline_id, user)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
     if body.expected_version is not None and body.expected_version != pipeline.version:
         raise HTTPException(status_code=409, detail="Pipeline version conflict")
     if body.name is not None:
@@ -373,7 +772,7 @@ def edit_pipeline(
     db: DbSession,
     settings: AppSettings,
 ) -> Pipeline:
-    pipeline = owned_pipeline(db, pipeline_id, user)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
     try:
         document, fingerprint = apply_document_edit(
             pipeline.document,
@@ -409,7 +808,7 @@ def grant_pipeline_token(
     user: CurrentUser,
     db: DbSession,
 ) -> PipelineTokenGrant:
-    pipeline = owned_pipeline(db, pipeline_id, user)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
     token = owned_token(db, body.token_id, user)
     if not token.is_active:
         raise HTTPException(status_code=422, detail="Token is inactive")
@@ -457,7 +856,7 @@ def list_pipeline_token_grants(
     user: CurrentUser,
     db: DbSession,
 ) -> list[PipelineTokenGrant]:
-    pipeline = owned_pipeline(db, pipeline_id, user)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
     return list(
         db.scalars(
             select(PipelineTokenGrant).where(
@@ -477,7 +876,7 @@ def revoke_pipeline_token(
     user: CurrentUser,
     db: DbSession,
 ) -> None:
-    pipeline = owned_pipeline(db, pipeline_id, user)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
     grant = db.scalar(
         select(PipelineTokenGrant).where(
             PipelineTokenGrant.id == grant_id,
@@ -486,6 +885,14 @@ def revoke_pipeline_token(
     )
     if grant is None:
         raise not_found("Token grant")
+    token = db.get(ApiToken, grant.token_id)
+    if pipeline.owner_id != user.id and (
+        token is None or token.owner_id != user.id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the pipeline or token owner can revoke this grant",
+        )
     db.delete(grant)
     db.commit()
 
@@ -497,7 +904,7 @@ def validate_pipeline(
     db: DbSession,
     settings: AppSettings,
 ) -> dict[str, Any]:
-    pipeline = owned_pipeline(db, pipeline_id, user)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
     try:
         return service_for(pipeline.document, pipeline.id, settings).validate(
             pipeline.id
@@ -513,7 +920,7 @@ def plan_pipeline(
     db: DbSession,
     settings: AppSettings,
 ) -> dict[str, Any]:
-    pipeline = owned_pipeline(db, pipeline_id, user)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
     try:
         return service_for(pipeline.document, pipeline.id, settings).plan(pipeline.id)
     except Exception as exc:
@@ -531,8 +938,12 @@ def run_pipeline(
     user: CurrentUser,
     db: DbSession,
 ) -> PipelineRun:
-    pipeline = owned_pipeline(db, pipeline_id, user)
-    return request.app.state.runner.submit(pipeline, session=db)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
+    return request.app.state.runner.submit(
+        pipeline,
+        run_owner_id=user.id,
+        session=db,
+    )
 
 
 @runs.get("", response_model=list[RunRead])
@@ -578,7 +989,7 @@ def create_schedule(
     user: CurrentUser,
     db: DbSession,
 ) -> Schedule:
-    pipeline = owned_pipeline(db, pipeline_id, user)
+    pipeline = accessible_pipeline(db, pipeline_id, user)
     manager: ScheduleManager = request.app.state.schedule_manager
     try:
         manager.validate(body.trigger_type, body.trigger_args)
@@ -692,6 +1103,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(runs)
     app.include_router(schedules)
     app.include_router(tokens)
+    app.include_router(groups)
+    app.include_router(group_invitations)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:

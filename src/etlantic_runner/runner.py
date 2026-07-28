@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from etlantic_runner.config import Settings
 from etlantic_runner.database import SessionLocal
 from etlantic_runner.etlantic_service import service_for
-from etlantic_runner.models import Pipeline, PipelineRun, PipelineTokenGrant
+from etlantic_runner.models import Pipeline, PipelineRun, PipelineTokenGrant, Schedule
 from etlantic_runner.token_store import UserTokenProvider
 
 logger = logging.getLogger(__name__)
@@ -30,11 +30,12 @@ class PipelineRunner:
         self,
         pipeline: Pipeline,
         *,
+        run_owner_id: str | None = None,
         schedule_id: str | None = None,
         session: Session,
     ) -> PipelineRun:
         run = PipelineRun(
-            owner_id=pipeline.owner_id,
+            owner_id=run_owner_id or pipeline.owner_id,
             pipeline_id=pipeline.id,
             schedule_id=schedule_id,
             status="queued",
@@ -56,8 +57,12 @@ class PipelineRunner:
             if pipeline is None:
                 logger.warning("Scheduled pipeline %s no longer exists", pipeline_id)
                 return None
+            schedule = session.get(Schedule, schedule_id) if schedule_id else None
             return self.submit(
-                pipeline, schedule_id=schedule_id, session=session
+                pipeline,
+                run_owner_id=schedule.owner_id if schedule is not None else None,
+                schedule_id=schedule_id,
+                session=session,
             ).id
 
     def _execute(self, run_id: str) -> None:
@@ -90,15 +95,18 @@ class PipelineRunner:
 
     def _runtime_for(self, run: PipelineRun) -> PipelineRuntime:
         runtime = PipelineRuntime()
-        runtime.register_secret_provider(
-            "user-tokens",
-            UserTokenProvider(run.owner_id, self.settings),
-        )
         with SessionLocal() as session:
             grants = (
                 session.query(PipelineTokenGrant)
                 .filter(PipelineTokenGrant.pipeline_id == run.pipeline_id)
                 .all()
+            )
+            runtime.register_secret_provider(
+                "user-tokens",
+                UserTokenProvider(
+                    {grant.token_id for grant in grants},
+                    self.settings,
+                ),
             )
             for grant in grants:
                 runtime.registry.register_binding(
